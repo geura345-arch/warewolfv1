@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Werewolf Online — Dark Forest</title>
+
+  <!-- Google Fonts: Fantasy/Game style -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700;900&family=Cinzel:wght@400;600;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,400&display=swap" rel="stylesheet" />
+
+  <!-- Firebase SDK -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, doc, setDoc, getDoc, updateDoc, onSnapshot, arrayUnion, deleteDoc, getDocs, query, where, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // ─── Firebase Config ───────────────────────────────────────────────────────
+    // GANTI dengan config Firebase project Anda
+    const firebaseConfig = {
+      apiKey: "AIzaSyAwh9c2I8qNdzlRVfT9ySbW7J1sQepANbI",
+      authDomain: "warewolf-eac34.firebaseapp.com",
+      projectId: "warewolf-eac34",
+      storageBucket: "warewolf-eac34.firebasestorage.app",
+      messagingSenderId: "24588337149",
+      appId: "1:24588337149:web:7ea56674c7942599702394"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Expose ke window agar script.js bisa akses
+    window._firebaseDB = db;
+    window._firebaseModules = {
+      collection, doc, setDoc, getDoc, updateDoc, onSnapshot,
+      arrayUnion, deleteDoc, getDocs, query, where, serverTimestamp, addDoc
+    };
+    window._firebaseReady = true;
+    document.dispatchEvent(new Event('firebaseReady'));
+  </script>
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     PARTICLE CANVAS — background effect
+═══════════════════════════════════════════════════════════════ -->
+<canvas id="particleCanvas"></canvas>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOADING SCREEN
+═══════════════════════════════════════════════════════════════ -->
+<div id="loadingScreen" class="screen active">
+  <div class="loading-content">
+    <div class="loading-wolf">🐺</div>
+    <h1 class="loading-title">WEREWOLF</h1>
+    <p class="loading-sub">Dark Forest Online</p>
+    <div class="loading-bar"><div class="loading-fill"></div></div>
+    <p class="loading-text">Memuat dunia sihir...</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     MAIN MENU
+═══════════════════════════════════════════════════════════════ -->
+<div id="menuScreen" class="screen">
+  <div class="menu-bg-overlay"></div>
+  <div class="menu-content">
+    <div class="menu-logo">
+      <div class="moon-icon">🌕</div>
+      <h1 class="game-title">WEREWOLF</h1>
+      <p class="game-subtitle">Dark Forest Online</p>
+    </div>
+    <div class="menu-buttons">
+      <button class="btn btn-primary btn-glow" onclick="UI.showScreen('loginScreen')">
+        <span class="btn-icon">⚔️</span> Bergabung Game
+      </button>
+      <button class="btn btn-admin" onclick="UI.showAdminLogin()">
+        <span class="btn-icon">👑</span> Admin Panel
+      </button>
+      <button class="btn btn-secondary" onclick="UI.showRules()">
+        <span class="btn-icon">📜</span> Cara Bermain
+      </button>
+    </div>
+    <div class="menu-footer">
+      <p>Made with 🐺 | Werewolf Online v2.0</p>
+    </div>
+  </div>
+  <!-- Floating wolves decoration -->
+  <div class="floating-deco deco-1">🐺</div>
+  <div class="floating-deco deco-2">🌙</div>
+  <div class="floating-deco deco-3">⭐</div>
+  <div class="floating-deco deco-4">🌲</div>
+  <div class="floating-deco deco-5">🔮</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOGIN / JOIN SCREEN
+═══════════════════════════════════════════════════════════════ -->
+<div id="loginScreen" class="screen">
+  <div class="screen-header">
+    <button class="btn-back" onclick="UI.showScreen('menuScreen')">← Kembali</button>
+    <h2>Bergabung ke Game</h2>
+  </div>
+  <div class="form-container glass-card">
+    <div class="form-group">
+      <label>Nama Pemain</label>
+      <input type="text" id="playerNameInput" placeholder="Masukkan namamu..." maxlength="20" />
+    </div>
+    <div class="form-group">
+      <label>Kode Room</label>
+      <input type="text" id="roomCodeInput" placeholder="Masukkan kode room (6 digit)..." maxlength="6" style="text-transform:uppercase" />
+    </div>
+    <button class="btn btn-primary btn-full" onclick="Game.joinRoom()">
+      <span class="btn-icon">🚪</span> Masuk Room
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ADMIN PANEL
+═══════════════════════════════════════════════════════════════ -->
+<div id="adminScreen" class="screen">
+  <div class="screen-header">
+    <button class="btn-back" onclick="UI.showScreen('menuScreen')">← Kembali</button>
+    <h2>👑 Admin Panel</h2>
+  </div>
+  <div class="admin-container">
+    <div class="glass-card admin-create">
+      <h3>Buat Room Baru</h3>
+      <div class="form-group">
+        <label>Jumlah Pemain (6–20)</label>
+        <input type="number" id="maxPlayersInput" min="6" max="20" value="8" />
+      </div>
+      <div class="form-group">
+        <label>Nama Admin</label>
+        <input type="text" id="adminNameInput" placeholder="Nama Admin..." maxlength="20" />
+      </div>
+      <button class="btn btn-admin btn-full" onclick="Admin.createRoom()">
+        <span class="btn-icon">🏰</span> Buat Room
+      </button>
+    </div>
+    <div id="adminRoomInfo" class="glass-card admin-room-info" style="display:none">
+      <h3>Room Aktif</h3>
+      <div class="room-code-display">
+        <span id="displayRoomCode">------</span>
+        <button class="btn-copy" onclick="Admin.copyCode()" title="Salin kode">📋</button>
+      </div>
+      <div id="adminPlayerList" class="player-list-admin"></div>
+      <div class="admin-actions">
+        <button class="btn btn-primary" onclick="Admin.startGame()" id="startGameBtn" disabled>
+          <span class="btn-icon">▶️</span> Mulai Game
+        </button>
+        <button class="btn btn-danger" onclick="Admin.closeRoom()">
+          <span class="btn-icon">🗑️</span> Tutup Room
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOBBY / WAITING ROOM
+═══════════════════════════════════════════════════════════════ -->
+<div id="lobbyScreen" class="screen">
+  <div class="lobby-header">
+    <h2>🏰 Ruang Tunggu</h2>
+    <div class="room-badge">Room: <strong id="lobbyRoomCode">------</strong></div>
+  </div>
+  <div class="lobby-content">
+    <div class="glass-card lobby-players">
+      <h3>Pemain (<span id="lobbyPlayerCount">0</span>/<span id="lobbyMaxPlayers">8</span>)</h3>
+      <div id="lobbyPlayerGrid" class="player-grid"></div>
+    </div>
+    <div class="lobby-chat glass-card">
+      <h3>💬 Chat Lobby</h3>
+      <div id="lobbyChatMessages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="lobbyChatInput" placeholder="Ketik pesan..." maxlength="200" />
+        <button class="btn-send" onclick="Chat.sendLobbyMessage()">➤</button>
+      </div>
+    </div>
+  </div>
+  <div class="lobby-status" id="lobbyStatus">Menunggu admin memulai game...</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ROLE REVEAL — Animasi kartu terbuka
+═══════════════════════════════════════════════════════════════ -->
+<div id="roleRevealScreen" class="screen">
+  <div class="role-reveal-bg"></div>
+  <div class="role-reveal-content">
+    <h2 class="reveal-title">Role Kamu...</h2>
+    <div class="card-flip-container" id="roleCard">
+      <div class="card-inner">
+        <div class="card-front">
+          <div class="card-question">?</div>
+        </div>
+        <div class="card-back" id="roleCardBack">
+          <!-- Filled dynamically -->
+        </div>
+      </div>
+    </div>
+    <p class="reveal-instruction" id="revealInstruction">Klik kartu untuk melihat role kamu!</p>
+    <button class="btn btn-primary reveal-btn" id="revealCardBtn" onclick="UI.flipRoleCard()">
+      Buka Kartu 🃏
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     DAY PHASE — Pagi hari
+═══════════════════════════════════════════════════════════════ -->
+<div id="dayScreen" class="screen">
+  <!-- Sky / Day animation -->
+  <div class="sky-day">
+    <div class="sun"></div>
+    <div class="clouds">
+      <div class="cloud c1"></div>
+      <div class="cloud c2"></div>
+      <div class="cloud c3"></div>
+    </div>
+  </div>
+
+  <div class="phase-content">
+    <div class="phase-header">
+      <div class="phase-badge day-badge">
+        ☀️ HARI <span id="dayNumber">1</span>
+      </div>
+      <div id="dayEventBanner" class="event-banner" style="display:none"></div>
+    </div>
+
+    <!-- Death announcement -->
+    <div id="deathAnnouncement" class="death-announcement glass-card" style="display:none">
+      <h3>💀 Malam tadi...</h3>
+      <div id="deathList"></div>
+    </div>
+
+    <!-- Alive players -->
+    <div class="glass-card players-alive-section">
+      <h3>👥 Pemain Hidup (<span id="aliveCount">0</span>)</h3>
+      <div id="alivePlayersGrid" class="player-grid"></div>
+    </div>
+
+    <!-- Discussion timer -->
+    <div class="timer-section glass-card">
+      <h3>⏱️ Waktu Diskusi</h3>
+      <div class="timer-display" id="discussionTimer">02:00</div>
+      <div class="timer-bar"><div class="timer-fill" id="timerFill"></div></div>
+    </div>
+
+    <!-- Chat -->
+    <div class="glass-card game-chat">
+      <h3>💬 Diskusi Publik</h3>
+      <div id="dayChatMessages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="dayChatInput" placeholder="Diskusi bersama..." maxlength="200" />
+        <button class="btn-send" onclick="Chat.sendDayMessage()">➤</button>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-proceed" id="proceedToVoteBtn" onclick="Admin.proceedToVoting()" style="display:none">
+      Lanjut ke Voting ▶
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     VOTING PHASE
+═══════════════════════════════════════════════════════════════ -->
+<div id="votingScreen" class="screen">
+  <div class="sky-day voting-sky">
+    <div class="sun low-sun"></div>
+  </div>
+
+  <div class="phase-content">
+    <div class="phase-header">
+      <div class="phase-badge vote-badge">🗳️ VOTING</div>
+      <p class="phase-sub">Pilih siapa yang akan dieliminasi</p>
+    </div>
+
+    <div class="glass-card voting-section">
+      <h3>Pilih Pemain untuk Dieliminasi</h3>
+      <div id="voteCandidates" class="vote-grid"></div>
+    </div>
+
+    <div class="glass-card vote-results-section">
+      <h3>📊 Hasil Suara</h3>
+      <div id="voteResults" class="vote-bars"></div>
+    </div>
+
+    <div id="myVoteStatus" class="vote-status glass-card"></div>
+
+    <button class="btn btn-danger btn-proceed" id="proceedToNightBtn" onclick="Admin.proceedToNight()" style="display:none">
+      Eksekusi & Lanjut ke Malam ▶
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     NIGHT PHASE
+═══════════════════════════════════════════════════════════════ -->
+<div id="nightScreen" class="screen">
+  <!-- Sky / Night animation -->
+  <div class="sky-night">
+    <div class="moon" id="nightMoon">🌙</div>
+    <div class="stars" id="starsContainer"></div>
+    <div id="fogOverlay" class="fog-overlay" style="display:none"></div>
+    <div id="eclipseOverlay" class="eclipse-overlay" style="display:none"></div>
+  </div>
+
+  <div class="phase-content">
+    <div class="phase-header">
+      <div class="phase-badge night-badge">
+        🌙 MALAM <span id="nightNumber">1</span>
+      </div>
+      <div id="nightEventBanner" class="event-banner" style="display:none"></div>
+    </div>
+
+    <!-- Role action panel -->
+    <div id="roleActionPanel" class="glass-card role-action-panel">
+      <div class="my-role-banner" id="myRoleBanner"></div>
+      <div id="roleActionContent">
+        <!-- Filled dynamically based on role -->
+      </div>
+      <div id="actionStatus" class="action-status"></div>
+    </div>
+
+    <!-- Waiting for others -->
+    <div id="nightWaiting" class="glass-card night-waiting" style="display:none">
+      <div class="waiting-animation">⏳</div>
+      <p>Menunggu pemain lain selesai...</p>
+      <div id="nightWaitingList"></div>
+    </div>
+
+    <!-- Night chat (werewolf team only) -->
+    <div id="wolfTeamChat" class="glass-card team-chat" style="display:none">
+      <h3>🐺 Chat Tim Serigala</h3>
+      <div id="wolfChatMessages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="wolfChatInput" placeholder="Chat tim serigala..." maxlength="200" />
+        <button class="btn-send" onclick="Chat.sendWolfMessage()">➤</button>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-proceed" id="proceedToDayBtn" onclick="Admin.proceedToDay()" style="display:none">
+      Lanjut ke Pagi ▶
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     DEAD PLAYER VIEW
+═══════════════════════════════════════════════════════════════ -->
+<div id="deadScreen" class="screen">
+  <div class="dead-bg"></div>
+  <div class="dead-content glass-card">
+    <div class="dead-icon">💀</div>
+    <h2>Kamu Telah Mati</h2>
+    <p id="deadRoleReveal"></p>
+    <div class="dead-spectate">
+      <h3>Kamu kini menjadi penonton</h3>
+      <div id="spectatorView"></div>
+    </div>
+    <div class="glass-card dead-chat-area">
+      <h3>👻 Chat Arwah</h3>
+      <div id="deadChatMessages" class="chat-messages"></div>
+      <div class="chat-input-row">
+        <input type="text" id="deadChatInput" placeholder="Hanya sesama arwah yang bisa mendengar..." maxlength="200" />
+        <button class="btn-send" onclick="Chat.sendDeadMessage()">➤</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     WIN SCREEN
+═══════════════════════════════════════════════════════════════ -->
+<div id="winScreen" class="screen">
+  <div id="winBg" class="win-bg"></div>
+  <div class="win-particles" id="winParticles"></div>
+  <div class="win-content">
+    <div class="win-icon" id="winIcon">🏆</div>
+    <h1 class="win-title" id="winTitle">TIM BIRU MENANG!</h1>
+    <p class="win-sub" id="winSub">Desa berhasil diselamatkan!</p>
+    <div class="win-survivors glass-card">
+      <h3>Para Pemenang</h3>
+      <div id="winnersList"></div>
+    </div>
+    <button class="btn btn-primary" onclick="UI.showScreen('menuScreen'); Game.reset()">
+      🏠 Kembali ke Menu
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     RULES MODAL
+═══════════════════════════════════════════════════════════════ -->
+<div id="rulesModal" class="modal" style="display:none">
+  <div class="modal-overlay" onclick="UI.closeRules()"></div>
+  <div class="modal-content glass-card rules-modal">
+    <button class="modal-close" onclick="UI.closeRules()">✕</button>
+    <h2>📜 Cara Bermain</h2>
+    <div class="rules-content">
+      <div class="rules-section team-blue">
+        <h3>🔵 Tim Biru (Good)</h3>
+        <ul>
+          <li><strong>Penduduk</strong> — Tidak punya skill, bantu tim dengan voting tepat</li>
+          <li><strong>Peramal</strong> — Lihat tim pemain (20% kemungkinan salah). Cooldown 1 malam</li>
+          <li><strong>Dokter</strong> — Sembuhkan 1 pemain/malam. Tidak bisa sembuhkan diri sendiri 2x berturut</li>
+          <li><strong>Penjaga</strong> — Proteksi 1 pemain (80% berhasil). Cooldown 2 malam</li>
+          <li><strong>Penyihir</strong> — Punya 1 ramuan hidup & 1 ramuan mati (sekali pakai)</li>
+          <li><strong>Pemburu</strong> — Saat mati, bisa menembak 1 pemain lain</li>
+        </ul>
+      </div>
+      <div class="rules-section team-red">
+        <h3>🔴 Tim Merah (Werewolf)</h3>
+        <ul>
+          <li><strong>Werewolf</strong> — Bunuh 1 pemain/malam. Tidak bisa bunuh yang sama 2 malam berturut</li>
+          <li><strong>Doppleganger</strong> — Salin role pemain lain. Berganti tim sesuai role yang disalin</li>
+        </ul>
+      </div>
+      <div class="rules-section team-purple">
+        <h3>🟣 Tim Ungu (Vampire)</h3>
+        <ul>
+          <li><strong>Vampire</strong> — Aktif malam GENAP saja. Bisa bunuh werewolf, tidak bisa sebaliknya</li>
+        </ul>
+      </div>
+      <div class="rules-section team-yellow">
+        <h3>🟡 Tim Kuning (Joker)</h3>
+        <ul>
+          <li><strong>Joker</strong> — Menang jika dibunuh atau dieliminasi voting</li>
+        </ul>
+      </div>
+      <div class="rules-section">
+        <h3>⚡ Event Acak</h3>
+        <ul>
+          <li><strong>Malam Berkabut</strong> — Semua skill malam gagal</li>
+          <li><strong>Gerhana</strong> — Semua role aktif malam ini</li>
+        </ul>
+      </div>
+      <div class="rules-section">
+        <h3>🏆 Kondisi Menang</h3>
+        <ul>
+          <li><strong>Tim Biru</strong> — Semua musuh (Merah & Ungu) mati</li>
+          <li><strong>Tim Merah</strong> — Jumlah serigala ≥ pemain lain, Biru & Ungu habis</li>
+          <li><strong>Tim Ungu</strong> — Semua pemain lain mati</li>
+          <li><strong>Joker</strong> — Mati karena dibunuh atau voting</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ADMIN LOGIN MODAL
+═══════════════════════════════════════════════════════════════ -->
+<div id="adminLoginModal" class="modal" style="display:none">
+  <div class="modal-overlay" onclick="UI.closeAdminLogin()"></div>
+  <div class="modal-content glass-card" style="max-width:380px">
+    <button class="modal-close" onclick="UI.closeAdminLogin()">✕</button>
+    <h2>👑 Admin Login</h2>
+    <div class="form-group">
+      <label>Password Admin</label>
+      <input type="password" id="adminPasswordInput" placeholder="Masukkan password..." />
+    </div>
+    <button class="btn btn-admin btn-full" onclick="Admin.login()">Masuk</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     NOTIFICATION TOAST
+═══════════════════════════════════════════════════════════════ -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ACTION ANIMATION OVERLAY
+═══════════════════════════════════════════════════════════════ -->
+<div id="actionOverlay" class="action-overlay" style="display:none">
+  <div class="action-anim" id="actionAnim"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     DAY/NIGHT TRANSITION OVERLAY
+═══════════════════════════════════════════════════════════════ -->
+<div id="transitionOverlay" class="transition-overlay" style="display:none">
+  <div class="transition-content" id="transitionContent"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ON-MIC PANEL (always visible when in game)
+═══════════════════════════════════════════════════════════════ -->
+<div id="micPanel" class="mic-panel" style="display:none">
+  <button id="micBtn" class="mic-btn" onclick="Voice.toggleMic()" title="Toggle Mikrofon">
+    🎤
+  </button>
+  <div id="micStatus" class="mic-status">OFF</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     FIREBASE CONFIG INFO OVERLAY (untuk demo)
+═══════════════════════════════════════════════════════════════ -->
+<div id="firebaseConfigOverlay" class="firebase-config-overlay glass-card">
+  <h3>⚙️ Konfigurasi Firebase</h3>
+  <p>Ganti config di <code>index.html</code> dengan project Firebase kamu.</p>
+  <div class="config-fields">
+    <input type="text" id="cfgApiKey" placeholder="apiKey" />
+    <input type="text" id="cfgProjectId" placeholder="projectId" />
+    <input type="text" id="cfgAppId" placeholder="appId" />
+  </div>
+  <button class="btn btn-primary" onclick="FirebaseConfig.apply()">Terapkan & Muat Ulang</button>
+  <button class="btn btn-secondary" onclick="document.getElementById('firebaseConfigOverlay').style.display='none'">
+    Tutup (Gunakan Config Default)
+  </button>
+  <p class="hint-text">Tanpa Firebase, mode demo lokal tersedia</p>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
