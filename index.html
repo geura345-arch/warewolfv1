@@ -3,6 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Security Headers -->
+  <!-- NOTE: X-Content-Type-Options & X-Frame-Options harus diset via HTTP server header, bukan meta tag.
+       Tambahkan di server config (nginx/apache/firebase.json) untuk produksi. -->
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin" />
+  <!-- Content Security Policy -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src 'self' 'unsafe-inline' https://www.gstatic.com;
+    style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+    font-src https://fonts.gstatic.com;
+    connect-src 'self'
+      https://www.gstatic.com
+      https://*.googleapis.com
+      https://*.firebaseio.com
+      wss://*.firebaseio.com
+      https://firestore.googleapis.com;
+    img-src 'self' data:;
+    frame-src 'none';
+    object-src 'none';
+    base-uri 'self';
+  " />
+  <!-- Favicon inline (emoji wolf, tidak perlu file eksternal) -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐺</text></svg>" />
   <title>Werewolf Online — Dark Forest</title>
 
   <!-- Google Fonts: Fantasy/Game style -->
@@ -15,27 +38,70 @@
     import { getFirestore, collection, doc, setDoc, getDoc, updateDoc, onSnapshot, arrayUnion, deleteDoc, getDocs, query, where, serverTimestamp, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
     // ─── Firebase Config ───────────────────────────────────────────────────────
-    // GANTI dengan config Firebase project Anda
-    const firebaseConfig = {
-      apiKey: "AIzaSyAwh9c2I8qNdzlRVfT9ySbW7J1sQepANbI",
-      authDomain: "warewolf-eac34.firebaseapp.com",
-      projectId: "warewolf-eac34",
-      storageBucket: "warewolf-eac34.firebasestorage.app",
-      messagingSenderId: "24588337149",
-      appId: "1:24588337149:web:7ea56674c7942599702394"
-    };
+    // CATATAN KEAMANAN:
+    // Firebase API key adalah PUBLIC key — aman untuk ada di client.
+    // Keamanan SESUNGGUHNYA ada di Firestore Security Rules (firestore.rules).
+    // Pastikan Rules sudah di-deploy sebelum live!
+    //
+    // Untuk production: pertimbangkan load config dari environment variable
+    // atau Firebase Hosting config injection.
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    // Coba load dari localStorage dulu (untuk live config overlay)
+    let firebaseConfig;
+    try {
+      const saved = localStorage.getItem('ww_fb_config');
+      if(saved) {
+        const parsed = JSON.parse(saved);
+        // Validasi minimal field
+        if(parsed.apiKey && parsed.projectId && parsed.appId) {
+          firebaseConfig = {
+            apiKey: parsed.apiKey,
+            projectId: parsed.projectId,
+            appId: parsed.appId,
+            authDomain: parsed.projectId + '.firebaseapp.com',
+            storageBucket: parsed.projectId + '.firebasestorage.app',
+          };
+        }
+      }
+    } catch(e) { /* invalid localStorage data */ }
 
-    // Expose ke window agar script.js bisa akses
-    window._firebaseDB = db;
-    window._firebaseModules = {
-      collection, doc, setDoc, getDoc, updateDoc, onSnapshot,
-      arrayUnion, deleteDoc, getDocs, query, where, serverTimestamp, addDoc
-    };
-    window._firebaseReady = true;
-    document.dispatchEvent(new Event('firebaseReady'));
+    // Fallback ke config default (ganti dengan config project kamu)
+    if(!firebaseConfig) {
+      firebaseConfig = {
+        apiKey: "AIzaSyAwh9c2I8qNdzlRVfT9ySbW7J1sQepANbI",
+        authDomain: "warewolf-eac34.firebaseapp.com",
+        projectId: "warewolf-eac34",
+        storageBucket: "warewolf-eac34.firebasestorage.app",
+        messagingSenderId: "24588337149",
+        appId: "1:24588337149:web:7ea56674c7942599702394"
+      };
+    }
+
+    // Validasi config sebelum init
+    const isValidConfig = firebaseConfig.apiKey !== 'GANTI_DENGAN_API_KEY_KAMU'
+      && firebaseConfig.apiKey.length > 10
+      && firebaseConfig.projectId.length > 3;
+
+    if(isValidConfig) {
+      try {
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        window._firebaseDB = db;
+        window._firebaseModules = {
+          collection, doc, setDoc, getDoc, updateDoc, onSnapshot,
+          arrayUnion, deleteDoc, getDocs, query, where, serverTimestamp, addDoc
+        };
+        window._firebaseReady = true;
+        document.dispatchEvent(new Event('firebaseReady'));
+      } catch(e) {
+        console.error('Firebase init error:', e.message);
+        window._firebaseReady = false;
+      }
+    } else {
+      console.warn('Firebase config belum diisi. Gunakan overlay konfigurasi.');
+      window._firebaseReady = false;
+    }
   </script>
 
   <link rel="stylesheet" href="style.css" />
@@ -406,10 +472,10 @@
         <h3>🔵 Tim Biru (Good)</h3>
         <ul>
           <li><strong>Penduduk</strong> — Tidak punya skill, bantu tim dengan voting tepat</li>
-          <li><strong>Peramal</strong> — Lihat tim pemain (20% kemungkinan salah). Cooldown 1 malam</li>
-          <li><strong>Dokter</strong> — Sembuhkan 1 pemain/malam. Tidak bisa sembuhkan diri sendiri 2x berturut</li>
-          <li><strong>Penjaga</strong> — Proteksi 1 pemain (80% berhasil). Cooldown 2 malam</li>
-          <li><strong>Penyihir</strong> — Punya 1 ramuan hidup & 1 ramuan mati (sekali pakai)</li>
+          <li><strong>Peramal</strong> ⬆️ <em style="color:#50e090">BUFF</em> — Lihat tim pemain dengan <strong>100% akurat</strong>. Cooldown 1 malam</li>
+          <li><strong>Dokter</strong> ⬇️ <em style="color:#ff8080">NERF</em> — Sembuhkan 1 pemain/malam. <strong>Tidak bisa menyembuhkan diri sendiri sama sekali</strong></li>
+          <li><strong>Penjaga</strong> ⬆️ <em style="color:#50e090">BUFF</em> — Proteksi 1 pemain <strong>100% berhasil</strong>. Cooldown 2 malam</li>
+          <li><strong>Penyihir</strong> ⬇️ <em style="color:#ff8080">NERF</em> — Hanya punya <strong>1 ramuan racun</strong> (sekali pakai). ⚠️ Jika meracuni tim biru → penyihir <strong>MELEDAK</strong> dan ikut tereliminasi!</li>
           <li><strong>Pemburu</strong> — Saat mati, bisa menembak 1 pemain lain</li>
         </ul>
       </div>
@@ -417,7 +483,7 @@
         <h3>🔴 Tim Merah (Werewolf)</h3>
         <ul>
           <li><strong>Werewolf</strong> — Bunuh 1 pemain/malam. Tidak bisa bunuh yang sama 2 malam berturut</li>
-          <li><strong>Doppleganger</strong> — Salin role pemain lain. Berganti tim sesuai role yang disalin</li>
+          <li><strong>Doppleganger</strong> ⬆️ <em style="color:#50e090">BUFF</em> — Bunuh anggota <strong>tim biru</strong> tiap malam & curi skill mereka (maks 3 skill). Tetap tim merah. Tidak bisa menyerang tim ungu/kuning</li>
         </ul>
       </div>
       <div class="rules-section team-purple">
@@ -462,7 +528,9 @@
     <h2>👑 Admin Login</h2>
     <div class="form-group">
       <label>Password Admin</label>
-      <input type="password" id="adminPasswordInput" placeholder="Masukkan password..." />
+      <input type="password" id="adminPasswordInput" placeholder="Masukkan password..."
+             onkeydown="if(event.key==='Enter') Admin.login()"
+             autocomplete="current-password" />
     </div>
     <button class="btn btn-admin btn-full" onclick="Admin.login()">Masuk</button>
   </div>
