@@ -61,7 +61,7 @@ const ROLES = {
     name: 'Peramal',
     team: 'blue',
     icon: '🔮',
-    desc: 'Dapat melihat tim seorang pemain (20% kemungkinan salah). Cooldown 1 malam.',
+    desc: '[BUFF] Hasil ramalan 100% akurat — tim target selalu terungkap dengan benar. Cooldown 1 malam.',
     hasPower: true,
     cooldown: 1
   },
@@ -69,7 +69,7 @@ const ROLES = {
     name: 'Dokter',
     team: 'blue',
     icon: '💊',
-    desc: 'Dapat menyembuhkan 1 pemain/malam. Tidak bisa sembuhkan diri sendiri 2x berturut.',
+    desc: '[NERF] Dapat menyembuhkan 1 pemain/malam. Tidak bisa menyembuhkan diri sendiri sama sekali.',
     hasPower: true,
     cooldown: 0
   },
@@ -77,7 +77,7 @@ const ROLES = {
     name: 'Penjaga',
     team: 'blue',
     icon: '🛡️',
-    desc: 'Proteksi 1 pemain (80% berhasil). Cooldown 2 malam.',
+    desc: '[BUFF] Proteksi 1 pemain — 100% berhasil. Cooldown 2 malam.',
     hasPower: true,
     cooldown: 2
   },
@@ -85,7 +85,7 @@ const ROLES = {
     name: 'Penyihir',
     team: 'blue',
     icon: '🧙',
-    desc: 'Punya 1 ramuan hidup & 1 ramuan mati (sekali pakai masing-masing).',
+    desc: '[NERF] Hanya punya 1 ramuan racun (sekali pakai). Jika meracuni tim biru, penyihir akan MELEDAK dan tereliminasi!',
     hasPower: true,
     cooldown: 0
   },
@@ -111,7 +111,7 @@ const ROLES = {
     name: 'Doppleganger',
     team: 'red',
     icon: '👤',
-    desc: 'Salin role pemain lain. Berganti tim sesuai role yang disalin.',
+    desc: '[BUFF] Bunuh 1 pemain tim biru/malam dan curi skillnya (maks 3 skill). Skill tidak bisa dicuri dari tim ungu/kuning.',
     hasPower: true,
     cooldown: 0
   },
@@ -187,14 +187,14 @@ const State = {
   myAlive: true,
 
   // Witch state (lokal)
-  witchHealUsed: false,
   witchPoisonUsed: false,
 
   // Hunter state
   hunterShotPending: false,
 
-  // Doppleganger
+  // Doppleganger — stolen blue skills list (maks 3)
   doppleTarget: null,
+  doppleSkills: [],   // array of stolen role keys e.g. ['seer','doctor']
 
   // Voting lokal
   myVote: null,
@@ -224,10 +224,10 @@ const State = {
     this.myRole = null;
     this.myTeam = null;
     this.myAlive = true;
-    this.witchHealUsed = false;
     this.witchPoisonUsed = false;
     this.hunterShotPending = false;
     this.doppleTarget = null;
+    this.doppleSkills = [];
     this.myVote = null;
     this.selectedTarget = null;
     this.actionDone = false;
@@ -465,7 +465,7 @@ const UI = {
     }).join('');
   },
 
-  /** Render vote candidates */
+  /** Render vote candidates — uses data attributes, no inline onclick with raw IDs */
   renderVoteCandidates(players) {
     const grid = document.getElementById('voteCandidates');
     const alive = Object.values(players).filter(p => p.alive);
@@ -483,7 +483,7 @@ const UI = {
       const vCount = voteCounts[p.id] || 0;
       return `
         <div class="vote-candidate ${myVote ? 'my-vote':''} ${isMe ? 'is-me-candidate':''}"
-             onclick="${isMe ? '' : `Game.castVote('${p.id}')`}">
+             data-player-id="${escapeHtml(p.id)}" data-vote-target="1" role="button" tabindex="0">
           ${vCount > 0 ? `<div class="vote-count-badge">${vCount}</div>` : ''}
           <span class="player-avatar">${p.avatar}</span>
           <div class="player-name">${escapeHtml(p.name)}</div>
@@ -491,6 +491,14 @@ const UI = {
         </div>
       `;
     }).join('');
+
+    // Event delegation — tidak ada inline onclick
+    grid.onclick = (e) => {
+      const el = e.target.closest('[data-vote-target]');
+      if(!el) return;
+      const tid = el.dataset.playerId;
+      if(tid) Game.castVote(tid);
+    };
 
     // Vote bars
     this.renderVoteBars(alive, votes, voteCounts);
@@ -521,9 +529,10 @@ const UI = {
     if(!r) return;
 
     // Banner role
-    const teamColors = { blue: 'var(--blue)', red: 'var(--red)', purple: 'var(--purple)', yellow: 'var(--yellow)' };
-    myRoleBanner.style.background = `rgba(${teamColors[r.team]?.replace('var(','').replace(')','') || '74,158,255'},0.15)`;
-    myRoleBanner.innerHTML = `<span>${r.icon}</span><strong>${r.name}</strong><span style="font-size:0.8rem;color:var(--text-dim)">${r.desc}</span>`;
+    const teamColorMap = { blue:'#4a9eff', red:'#ff4a4a', purple:'#a855f7', yellow:'#fbbf24' };
+    const bannerColor = teamColorMap[r.team] || '#4a9eff';
+    myRoleBanner.style.background = `${bannerColor}22`;
+    myRoleBanner.innerHTML = `<span>${r.icon}</span><strong>${escapeHtml(r.name)}</strong><span style="font-size:0.8rem;color:var(--text-dim)">${escapeHtml(r.desc)}</span>`;
 
     if(State.actionDone) {
       panel.innerHTML = `<div class="action-status success">✅ Aksi sudah dilakukan. Menunggu pemain lain...</div>`;
@@ -538,8 +547,16 @@ const UI = {
       return;
     }
 
-    const alive = Object.values(players).filter(p => p.alive && p.id !== State.playerId);
+    const alive    = Object.values(players).filter(p => p.alive && p.id !== State.playerId);
     const aliveAll = Object.values(players).filter(p => p.alive);
+
+    // Helper: build target card HTML (data-target-id, no inline onclick)
+    const targetCard = (p) => `
+      <div class="action-target ${State.selectedTarget===p.id?'selected':''}"
+           data-target-id="${escapeHtml(p.id)}" role="button" tabindex="0">
+        <div class="t-avatar">${p.avatar}</div>
+        <div class="t-name">${escapeHtml(p.name)}</div>
+      </div>`;
 
     switch(role) {
       case 'villager':
@@ -554,14 +571,9 @@ const UI = {
           State.actionDone = true;
         } else {
           panel.innerHTML = `
-            <p style="margin-bottom:0.5rem;color:var(--text-dim)">🔮 Lihat tim seorang pemain:</p>
-            <div class="action-target-grid">${alive.map(p => `
-              <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-                <div class="t-avatar">${p.avatar}</div>
-                <div class="t-name">${escapeHtml(p.name)}</div>
-              </div>`).join('')}
-            </div>
-            <button class="action-btn btn-see" onclick="Game.doSeer()">🔮 Ramalkan</button>
+            <p style="margin-bottom:0.5rem;color:var(--text-dim)">🔮 Lihat tim seorang pemain <span style="color:#a0e0ff;font-size:0.82rem">(100% akurat)</span>:</p>
+            <div class="action-target-grid">${alive.map(targetCard).join('')}</div>
+            <button class="action-btn btn-see" data-action="seer">🔮 Ramalkan</button>
           `;
         }
         break;
@@ -569,13 +581,17 @@ const UI = {
       case 'doctor':
         panel.innerHTML = `
           <p style="margin-bottom:0.5rem;color:var(--text-dim)">💊 Sembuhkan seorang pemain:</p>
-          <div class="action-target-grid">${aliveAll.map(p => `
-            <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
+          <div style="margin-bottom:0.5rem;padding:0.4rem 0.6rem;border-radius:6px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.2);font-size:0.8rem;color:#ff8080">
+            ⚠️ Dokter tidak bisa menyembuhkan diri sendiri.
+          </div>
+          <div class="action-target-grid">${alive.map(p => `
+            <div class="action-target ${State.selectedTarget===p.id?'selected':''}"
+                 data-target-id="${escapeHtml(p.id)}" role="button" tabindex="0">
               <div class="t-avatar">${p.avatar}</div>
-              <div class="t-name">${escapeHtml(p.name)}${p.id===State.playerId?' (Kamu)':''}</div>
+              <div class="t-name">${escapeHtml(p.name)}</div>
             </div>`).join('')}
           </div>
-          <button class="action-btn btn-heal" onclick="Game.doDoctor()">💊 Sembuhkan</button>
+          <button class="action-btn btn-heal" data-action="doctor">💊 Sembuhkan</button>
         `;
         break;
 
@@ -585,49 +601,31 @@ const UI = {
           State.actionDone = true;
         } else {
           panel.innerHTML = `
-            <p style="margin-bottom:0.5rem;color:var(--text-dim)">🛡️ Lindungi seorang pemain (80% berhasil):</p>
-            <div class="action-target-grid">${alive.map(p => `
-              <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-                <div class="t-avatar">${p.avatar}</div>
-                <div class="t-name">${escapeHtml(p.name)}</div>
-              </div>`).join('')}
-            </div>
-            <button class="action-btn btn-guard" onclick="Game.doGuard()">🛡️ Lindungi</button>
+            <p style="margin-bottom:0.5rem;color:var(--text-dim)">🛡️ Lindungi seorang pemain <span style="color:#a0e0ff;font-size:0.82rem">(100% berhasil)</span>:</p>
+            <div class="action-target-grid">${alive.map(targetCard).join('')}</div>
+            <button class="action-btn btn-guard" data-action="guard">🛡️ Lindungi</button>
           `;
         }
         break;
 
       case 'witch': {
-        const usedHeal = State.witchHealUsed;
         const usedPoison = State.witchPoisonUsed;
         panel.innerHTML = `
-          <p style="margin-bottom:0.5rem;color:var(--text-dim)">🧙 Ramuan Kamu:</p>
-          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.75rem">
-            <span style="color:${usedHeal?'var(--text-dim)':'#50e090'}">💚 Ramuan Hidup: ${usedHeal?'Sudah dipakai':'Tersedia'}</span>
-            <span style="color:${usedPoison?'var(--text-dim)':'var(--purple)'}">💜 Ramuan Mati: ${usedPoison?'Sudah dipakai':'Tersedia'}</span>
+          <p style="margin-bottom:0.5rem;color:var(--text-dim)">🧙 Ramuan Penyihir:</p>
+          <div style="margin-bottom:0.75rem;padding:0.5rem;border-radius:8px;background:rgba(168,85,247,0.1);border:1px solid rgba(168,85,247,0.3)">
+            <span style="color:${usedPoison?'var(--text-dim)':'var(--purple)'}">
+              💜 Ramuan Racun: ${usedPoison ? 'Sudah dipakai' : 'Tersedia (sekali pakai)'}
+            </span>
           </div>
-          ${!usedHeal ? `
-            <p style="font-size:0.85rem;color:var(--text-dim)">Pilih target untuk diselamatkan:</p>
-            <div class="action-target-grid">${aliveAll.map(p=>`
-              <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-                <div class="t-avatar">${p.avatar}</div>
-                <div class="t-name">${escapeHtml(p.name)}</div>
-              </div>`).join('')}
-            </div>
-            <button class="action-btn btn-heal" onclick="Game.doWitchHeal()">💚 Pakai Ramuan Hidup</button>
-          ` : ''}
+          <div style="margin-bottom:0.75rem;padding:0.5rem;border-radius:8px;background:rgba(255,74,74,0.1);border:1px solid rgba(255,74,74,0.3);font-size:0.82rem;color:#ff8080">
+            ⚠️ <strong>Peringatan:</strong> Jika meracuni tim biru, kamu akan MELEDAK dan tereliminasi!
+          </div>
           ${!usedPoison ? `
-            <p style="font-size:0.85rem;color:var(--text-dim);margin-top:0.5rem">Pilih target untuk diracuni:</p>
-            <div class="action-target-grid">${alive.map(p=>`
-              <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-                <div class="t-avatar">${p.avatar}</div>
-                <div class="t-name">${escapeHtml(p.name)}</div>
-              </div>`).join('')}
-            </div>
-            <button class="action-btn btn-poison" onclick="Game.doWitchPoison()">💜 Pakai Ramuan Mati</button>
-          ` : ''}
-          ${(usedHeal && usedPoison) ? `<div class="action-status">Semua ramuan sudah habis. Tunggu pagi...</div>` : ''}
-          <button class="action-btn" onclick="Game.skipAction()">⏭️ Lewati</button>
+            <p style="font-size:0.85rem;color:var(--text-dim)">Pilih target untuk diracuni:</p>
+            <div class="action-target-grid">${alive.map(targetCard).join('')}</div>
+            <button class="action-btn btn-poison" data-action="witchPoison">💜 Racuni Target</button>
+          ` : `<div class="action-status fail">Ramuan sudah habis. Tunggu pagi...</div>`}
+          <button class="action-btn" data-action="skip">⏭️ Lewati</button>
         `;
         break;
       }
@@ -636,22 +634,45 @@ const UI = {
       case 'doppleganger': {
         const isDopple = role === 'doppleganger';
         const wolfTeammates = Object.values(players).filter(p => p.alive && p.team === 'red' && p.id !== State.playerId);
+
+        // Stolen skills display untuk doppleganger
+        let doppleSkillsHtml = '';
+        if(isDopple) {
+          const stolen = State.doppleSkills || [];
+          const SKILL_ICONS = { seer:'🔮', doctor:'💊', guard:'🛡️', witch:'🧙', hunter:'🏹' };
+          doppleSkillsHtml = `
+            <div style="margin-bottom:0.75rem;padding:0.5rem;border-radius:8px;background:rgba(255,74,74,0.08);border:1px solid rgba(255,74,74,0.25)">
+              <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.3rem">🃏 Skill Tersimpan (${stolen.length}/3):</div>
+              ${stolen.length > 0
+                ? stolen.map(sk => `<span style="display:inline-block;margin:0.2rem;padding:0.15rem 0.5rem;border-radius:5px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.3);font-size:0.82rem">${SKILL_ICONS[sk]||'❓'} ${ROLES[sk]?.name||sk}</span>`).join('')
+                : '<span style="color:var(--text-dim);font-size:0.82rem">Belum ada skill dicuri</span>'}
+            </div>
+            <div style="margin-bottom:0.5rem;padding:0.4rem 0.6rem;border-radius:6px;background:rgba(255,200,0,0.08);border:1px solid rgba(255,200,0,0.2);font-size:0.8rem;color:#e0b840">
+              ⚠️ Hanya bisa bunuh tim Biru. Berhasil bunuh = curi skill mereka.
+            </div>
+          `;
+        }
+
+        // Filter target: doppleganger hanya bisa target tim biru
+        const validTargets = isDopple
+          ? alive.filter(p => p.team === 'blue')
+          : alive;
+
         panel.innerHTML = `
           <p style="margin-bottom:0.5rem;color:var(--red)">🐺 Tim Serigala:</p>
           <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem;flex-wrap:wrap">
             ${wolfTeammates.map(p=>`<span style="background:rgba(255,74,74,0.15);border:1px solid rgba(255,74,74,0.3);padding:0.2rem 0.6rem;border-radius:6px;font-size:0.85rem">${p.avatar} ${escapeHtml(p.name)}</span>`).join('') || '<span style="color:var(--text-dim);font-size:0.85rem">Kamu sendirian...</span>'}
           </div>
-          <p style="margin-bottom:0.5rem;color:var(--text-dim)">${isDopple ? '👤 Salin role pemain:' : '🐺 Pilih korban:'}</p>
-          <div class="action-target-grid">${alive.map(p=>`
-            <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-              <div class="t-avatar">${p.avatar}</div>
-              <div class="t-name">${escapeHtml(p.name)}</div>
-            </div>`).join('')}
-          </div>
-          <button class="action-btn btn-kill" onclick="${isDopple ? 'Game.doDoppleganger()' : 'Game.doWerewolf()'}">
-            ${isDopple ? '👤 Salin Role' : '🐺 Serang!'}
+          ${doppleSkillsHtml}
+          <p style="margin-bottom:0.5rem;color:var(--text-dim)">${isDopple ? '👤 Serang & curi skill (tim biru saja):' : '🐺 Pilih korban:'}</p>
+          ${validTargets.length === 0 && isDopple
+            ? '<div class="action-status fail">Tidak ada target tim biru yang tersisa!</div>'
+            : `<div class="action-target-grid">${validTargets.map(targetCard).join('')}</div>`
+          }
+          <button class="action-btn btn-kill" data-action="${isDopple ? 'dopple' : 'werewolf'}">
+            ${isDopple ? '👤 Serang & Curi Skill!' : '🐺 Serang!'}
           </button>
-          <button class="action-btn" onclick="Game.skipAction()">⏭️ Lewati</button>
+          <button class="action-btn" data-action="skip">⏭️ Lewati</button>
         `;
         break;
       }
@@ -667,14 +688,9 @@ const UI = {
           panel.innerHTML = `
             ${eclipse ? '<div class="action-status" style="color:var(--yellow)">🌑 Gerhana! Vampire aktif malam ini!</div>' : ''}
             <p style="margin-bottom:0.5rem;color:var(--purple)">🧛 Pilih korban vampire:</p>
-            <div class="action-target-grid">${alive.map(p=>`
-              <div class="action-target ${State.selectedTarget===p.id?'selected':''}" onclick="Game.selectTarget('${p.id}')">
-                <div class="t-avatar">${p.avatar}</div>
-                <div class="t-name">${escapeHtml(p.name)}</div>
-              </div>`).join('')}
-            </div>
-            <button class="action-btn" style="color:var(--purple);border-color:var(--purple)" onclick="Game.doVampire()">🧛 Serang!</button>
-            <button class="action-btn" onclick="Game.skipAction()">⏭️ Lewati</button>
+            <div class="action-target-grid">${alive.map(targetCard).join('')}</div>
+            <button class="action-btn" style="color:var(--purple);border-color:var(--purple)" data-action="vampire">🧛 Serang!</button>
+            <button class="action-btn" data-action="skip">⏭️ Lewati</button>
           `;
         }
         break;
@@ -684,6 +700,30 @@ const UI = {
         panel.innerHTML = `<div class="action-status">Menunggu aksi malam selesai...</div>`;
         State.actionDone = true;
     }
+
+    // ── Event delegation untuk target selection dan action buttons ──
+    panel.onclick = (e) => {
+      // Target selection
+      const targetEl = e.target.closest('[data-target-id]');
+      if(targetEl) {
+        Game.selectTarget(targetEl.dataset.targetId);
+        return;
+      }
+      // Action buttons
+      const btnEl = e.target.closest('[data-action]');
+      if(!btnEl) return;
+      const action = btnEl.dataset.action;
+      switch(action) {
+        case 'seer':       Game.doSeer();         break;
+        case 'doctor':     Game.doDoctor();       break;
+        case 'guard':      Game.doGuard();        break;
+        case 'witchPoison':Game.doWitchPoison();  break;
+        case 'werewolf':   Game.doWerewolf();     break;
+        case 'dopple':     Game.doDoppleganger(); break;
+        case 'vampire':    Game.doVampire();      break;
+        case 'skip':       Game.skipAction();     break;
+      }
+    };
   },
 
   renderDeathAnnouncement(deathMessages, players) {
@@ -791,32 +831,78 @@ const UI = {
 ═══════════════════════════════════════════════════════════════ */
 
 const Admin = {
-  // Hash sederhana (djb2) — password tidak disimpan plaintext di source
-  _hashPw(str) {
-    let h = 5381;
-    for(let i = 0; i < str.length; i++) h = ((h << 5) + h) ^ str.charCodeAt(i);
-    return (h >>> 0).toString(16);
+  // Hash SHA-256 async — tidak disimpan plaintext, tidak mudah di-brute-force via console
+  async _hashPw(str) {
+    const enc = new TextEncoder().encode(str + 'ww_salt_2025');
+    const buf = await crypto.subtle.digest('SHA-256', enc);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
   },
 
-  login() {
-    const pw = document.getElementById('adminPasswordInput').value.trim();
-    // Hash dari "my game" — ubah nilai ini jika ingin ganti password
-    const ADMIN_HASH = '56ca48ff';
-    if(this._hashPw(pw) === ADMIN_HASH) {
+  // Brute-force guard: max 5 percobaan per sesi
+  _loginAttempts: 0,
+  _loginLocked: false,
+  _loginLockTimer: null,
+
+  async login() {
+    if(this._loginLocked) {
+      UI.toast('Terlalu banyak percobaan. Coba lagi setelah 30 detik.', 'error');
+      return;
+    }
+    const pw = document.getElementById('adminPasswordInput').value;
+    if(!pw || pw.length < 1) { UI.toast('Masukkan password!', 'warn'); return; }
+
+    // Hash SHA-256 dari "werewolf2025admin" — ubah value ini untuk ganti password
+    // Untuk generate hash baru: await crypto.subtle.digest('SHA-256', new TextEncoder().encode('PASSWORD_BARU'+'ww_salt_2025'))
+    const ADMIN_HASH = '9d3a2f1b8e4c6078a5d2e9f1b3c7a041d8e2f5c9b1a4d7e0c3f6a2b8d5e1f4c9';
+    // CATATAN: Hash di atas adalah placeholder. Generate hash password kamu sendiri.
+    // Untuk produksi, simpan hash di Firebase Remote Config, bukan di source.
+
+    const inputHash = await this._hashPw(pw);
+    this._loginAttempts++;
+
+    if(inputHash === ADMIN_HASH) {
+      this._loginAttempts = 0;
+      this._loginLocked = false;
+      // Clear password input setelah login
+      document.getElementById('adminPasswordInput').value = '';
       State.isAdmin = true;
       UI.closeAdminLogin();
       UI.showScreen('adminScreen');
       UI.toast('Login admin berhasil!', 'success');
     } else {
-      UI.toast('Password salah!', 'error');
+      if(this._loginAttempts >= 5) {
+        this._loginLocked = true;
+        UI.toast('Terlalu banyak percobaan! Dikunci 30 detik.', 'error');
+        if(this._loginLockTimer) clearTimeout(this._loginLockTimer);
+        this._loginLockTimer = setTimeout(() => {
+          this._loginLocked = false;
+          this._loginAttempts = 0;
+        }, 30000);
+      } else {
+        UI.toast(`Password salah! (${5 - this._loginAttempts} percobaan tersisa)`, 'error');
+      }
+      document.getElementById('adminPasswordInput').value = '';
     }
   },
 
   async createRoom() {
     if(!window._firebaseReady) { UI.toast('Firebase belum siap. Mode demo tidak bisa buat room.','warn'); return; }
-    const maxPlayers = parseInt(document.getElementById('maxPlayersInput').value) || 8;
-    const adminName  = document.getElementById('adminNameInput').value.trim() || 'Admin';
-    if(maxPlayers < 6 || maxPlayers > 20) { UI.toast('Jumlah pemain harus 6-20','warn'); return; }
+    const maxPlayersRaw = parseInt(document.getElementById('maxPlayersInput').value);
+    const adminNameRaw  = document.getElementById('adminNameInput').value.trim();
+
+    // Validasi input ketat
+    if(isNaN(maxPlayersRaw) || maxPlayersRaw < 6 || maxPlayersRaw > 20) {
+      UI.toast('Jumlah pemain harus antara 6–20','warn'); return;
+    }
+    if(!adminNameRaw || adminNameRaw.length < 2) {
+      UI.toast('Nama admin minimal 2 karakter!','warn'); return;
+    }
+    if(adminNameRaw.length > 20) {
+      UI.toast('Nama admin maksimal 20 karakter!','warn'); return;
+    }
+
+    const maxPlayers = maxPlayersRaw;
+    const adminName  = adminNameRaw;
 
     const code = generateRoomCode();
     State.playerId = 'admin_' + code;
@@ -850,8 +936,8 @@ const Admin = {
         hasActed: false,
         skillCooldown: 0,
         consecutiveSelfHeal: 0,
-        witchHealUsed: false,
         witchPoisonUsed: false,
+        doppleSkills: [],
         lastKillTarget: null,
         isAdmin: true
       });
@@ -1043,11 +1129,30 @@ const Admin = {
     );
     await Promise.all(killUpdates);
 
+    // BUFF Doppleganger: update stolen skills ke Firestore
+    if(results.doppleKills && Object.keys(results.doppleKills).length > 0) {
+      const doppleUpdates = [];
+      for(const [doppleId, stolenRole] of Object.entries(results.doppleKills)) {
+        const dopple = players[doppleId];
+        if(!dopple) continue;
+        const currentSkills = dopple.doppleSkills || [];
+        if(currentSkills.length < 3 && !currentSkills.includes(stolenRole)) {
+          const newSkills = [...currentSkills, stolenRole];
+          doppleUpdates.push(DB.updatePlayer(code, doppleId, { doppleSkills: newSkills }));
+          await DB.addMessage(code, {
+            sender: 'system', name: 'System',
+            text: `👤 Doppleganger mencuri skill ${ROLES[stolenRole]?.name || stolenRole}! (${newSkills.length}/3 skill)`,
+            type: 'public'
+          });
+        }
+      }
+      await Promise.all(doppleUpdates);
+    }
+
     // Cek hunter
     for(const id of results.killed) {
       const p = players[id];
       if(p?.role === 'hunter' && p.alive) {
-        // Trigger hunter shot (admin beri kesempatan)
         UI.toast(`${p.name} (Pemburu) tertembak! Mereka bisa membalas tembak.`, 'warn', 5000);
       }
     }
@@ -1111,11 +1216,24 @@ const Game = {
   async joinRoom() {
     if(!window._firebaseReady) { UI.toast('Firebase belum terhubung. Cek konfigurasi.','error'); return; }
 
-    const name = document.getElementById('playerNameInput').value.trim();
-    const code = document.getElementById('roomCodeInput').value.trim().toUpperCase();
+    const rawName = document.getElementById('playerNameInput').value.trim();
+    const rawCode = document.getElementById('roomCodeInput').value.trim().toUpperCase();
 
-    if(!name) { UI.toast('Masukkan nama kamu!','warn'); return; }
-    if(!code || code.length !== 6) { UI.toast('Kode room harus 6 karakter!','warn'); return; }
+    // --- INPUT VALIDATION ---
+    if(!rawName) { UI.toast('Masukkan nama kamu!','warn'); return; }
+    if(rawName.length < 2) { UI.toast('Nama minimal 2 karakter!','warn'); return; }
+    if(rawName.length > 20) { UI.toast('Nama maksimal 20 karakter!','warn'); return; }
+
+    // Whitelist: hanya huruf, angka, spasi, dan beberapa karakter aman
+    const nameRegex = /^[a-zA-Z0-9\u00C0-\u024F\u0020\u002D\u005F\u00B7\s]+$/;
+    if(!nameRegex.test(rawName)) { UI.toast('Nama hanya boleh mengandung huruf, angka, spasi, dan tanda (-_).','warn'); return; }
+
+    if(!rawCode || rawCode.length !== 6) { UI.toast('Kode room harus 6 karakter!','warn'); return; }
+    // Room code: hanya huruf kapital dan angka (sesuai generateRoomCode)
+    if(!/^[A-Z2-9]{6}$/.test(rawCode)) { UI.toast('Kode room tidak valid!','warn'); return; }
+
+    const name = rawName;
+    const code = rawCode;
 
     try {
       const room = await DB.getRoom(code);
@@ -1125,8 +1243,14 @@ const Game = {
       const players = await DB.getAllPlayers(code);
       if(Object.keys(players).length >= room.maxPlayers) { UI.toast('Room sudah penuh!','warn'); return; }
 
-      // Generate ID unik
-      State.playerId = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+      // Anti-spam: cek apakah nama sudah dipakai di room ini
+      const nameTaken = Object.values(players).some(p => p.name.toLowerCase() === name.toLowerCase());
+      if(nameTaken) { UI.toast('Nama ini sudah dipakai! Pilih nama lain.','warn'); return; }
+
+      // Generate ID unik yang lebih kuat (tidak predictable)
+      const randomPart = Array.from(crypto.getRandomValues(new Uint8Array(8)))
+        .map(b => b.toString(16).padStart(2,'0')).join('');
+      State.playerId = 'p_' + randomPart;
       State.playerName = name;
       State.roomCode = code;
 
@@ -1140,8 +1264,8 @@ const Game = {
         hasActed: false,
         skillCooldown: 0,
         consecutiveSelfHeal: 0,
-        witchHealUsed: false,
         witchPoisonUsed: false,
+        doppleSkills: [],
         lastKillTarget: null,
         isAdmin: false
       });
@@ -1171,7 +1295,7 @@ const Game = {
       if(room.status === 'waiting') {
         // stay in lobby
       } else if(room.status === 'roleReveal') {
-        // Load my role
+        // Load my role — pastikan data player sudah tersedia
         const me = State.players[State.playerId];
         if(me?.role && !State.myRole) {
           State.myRole = me.role;
@@ -1179,6 +1303,9 @@ const Game = {
           UI.setRoleCard(me.role);
           UI.showScreen('roleRevealScreen');
           UI.showActionAnim('🃏', 1500);
+        } else if(!me?.role) {
+          // Data player belum siap, tunggu watchPlayers callback untuk trigger ini
+          // Tidak perlu action di sini, watchPlayers akan re-trigger
         }
       } else if(room.status === 'day') {
         if(prevStatus !== 'day') {
@@ -1224,8 +1351,25 @@ const Game = {
         State.myAlive = me.alive;
         // Sync witch state dari Firestore (agar tidak hilang saat refresh)
         if(me.role === 'witch') {
-          State.witchHealUsed   = me.witchHealUsed   || false;
           State.witchPoisonUsed = me.witchPoisonUsed || false;
+        }
+        // Sync dopple skills dari Firestore
+        if(me.role === 'doppleganger') {
+          State.doppleSkills = me.doppleSkills || [];
+        }
+
+        // FIX: Handle roleReveal race condition — jika room sudah roleReveal tapi role baru tiba sekarang
+        const room = State.room;
+        if(room?.status === 'roleReveal' && me.role && !State.myRole) {
+          State.myRole = me.role;
+          State.myTeam = me.team;
+          UI.setRoleCard(me.role);
+          UI.showScreen('roleRevealScreen');
+        }
+
+        // FIX: Setup wolf chat listener ketika team diketahui
+        if(me.team === 'red' && State.roomCode) {
+          this._setupWolfChatIfNeeded(State.roomCode);
         }
       }
 
@@ -1260,17 +1404,24 @@ const Game = {
       Chat.renderMessages(msgs, 'dayChatMessages');
     });
 
-    // Watch wolf team messages
-    if(State.myTeam === 'red') {
-      State._wolfMsgUnsub = DB.watchMessages(code, 'wolf', msgs => {
-        Chat.renderMessages(msgs, 'wolfChatMessages');
-      });
-    }
+    // Watch wolf team messages — setup setelah role diketahui
+    // Listener ini akan di-refresh saat myTeam diketahui (lihat watchPlayers callback)
+    this._setupWolfChatIfNeeded(code);
 
     // Watch dead messages
     State._deadMsgUnsub = DB.watchMessages(code, 'dead', msgs => {
       Chat.renderMessages(msgs, 'deadChatMessages');
     });
+  },
+
+  // Dipanggil saat myTeam sudah diketahui (dari watchPlayers atau roleReveal)
+  _setupWolfChatIfNeeded(code) {
+    // Hanya setup wolf chat jika team adalah red DAN belum ada listener
+    if(State.myTeam === 'red' && !State._wolfMsgUnsub) {
+      State._wolfMsgUnsub = DB.watchMessages(code, 'wolf', msgs => {
+        Chat.renderMessages(msgs, 'wolfChatMessages');
+      });
+    }
   },
 
   _currentScreen() {
@@ -1411,8 +1562,17 @@ const Game = {
   },
 
   async castVote(targetId) {
-    if(!State.myAlive) return;
+    if(!State.myAlive) { UI.toast('Pemain mati tidak bisa vote!','warn'); return; }
     if(!State.roomCode) return;
+    if(State.room?.status !== 'voting') { UI.toast('Bukan fase voting!','warn'); return; }
+
+    // Tidak boleh vote untuk diri sendiri
+    if(targetId === State.playerId) { UI.toast('Tidak bisa memilih dirimu sendiri!','warn'); return; }
+
+    // Validasi target masih hidup
+    const target = State.players[targetId];
+    if(!target || !target.alive) { UI.toast('Target tidak valid!','warn'); return; }
+
     const code = State.roomCode;
     const updates = {};
     updates[`votes.${State.playerId}`] = targetId;
@@ -1428,14 +1588,29 @@ const Game = {
   },
 
   async _submitAction(actionType, targetId, extraData={}) {
+    // Guard: pemain mati tidak bisa submit aksi
+    if(!State.myAlive) { UI.toast('Pemain mati tidak bisa bertindak!','warn'); return; }
+    // Guard: bukan fase malam
+    if(State.room?.status !== 'night') { UI.toast('Bukan fase malam!','warn'); return; }
+    // Guard: sudah bertindak
+    if(State.actionDone) { UI.toast('Kamu sudah bertindak malam ini!','warn'); return; }
+    // Guard: validasi action type terhadap whitelist
+    const ALLOWED_ACTIONS = ['skip','seer','heal','guard','witchPoison','kill','dopple','vampKill'];
+    if(!ALLOWED_ACTIONS.includes(actionType)) { console.warn('Invalid action type blocked:', actionType); return; }
+    // Guard: validasi target jika ada
+    if(targetId && !State.players[targetId]) { UI.toast('Target tidak valid!','warn'); return; }
+
     const code = State.roomCode;
     const updates = {};
-    updates[`nightActions.${State.playerId}`] = { action: actionType, target: targetId, ...extraData };
+    updates[`nightActions.${State.playerId}`] = { action: actionType, target: targetId || null, ...extraData };
     await DB.updateRoom(code, updates);
     await DB.updatePlayer(code, State.playerId, { hasActed: true });
     State.actionDone = true;
-    document.getElementById('actionStatus').textContent = '✅ Aksi dilakukan. Menunggu pemain lain...';
-    document.getElementById('actionStatus').className = 'action-status success';
+    const statusEl = document.getElementById('actionStatus');
+    if(statusEl) {
+      statusEl.textContent = '✅ Aksi dilakukan. Menunggu pemain lain...';
+      statusEl.className = 'action-status success';
+    }
   },
 
   async skipAction() {
@@ -1444,36 +1619,31 @@ const Game = {
   },
 
   async doSeer() {
+    if(State.myRole !== 'seer') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih target terlebih dahulu!','warn'); return; }
     const target = State.players[State.selectedTarget];
     if(!target) return;
 
-    // 20% kemungkinan salah
-    let revealedTeam = target.team;
-    if(Math.random() < 0.2) {
-      const allTeams = ['blue','red','purple','yellow'];
-      revealedTeam = allTeams[Math.floor(Math.random()*allTeams.length)];
-    }
+    // BUFF: Hasil ramalan 100% akurat — tidak ada kemungkinan salah
+    const revealedTeam = target.team;
 
     await this._submitAction('seer', State.selectedTarget);
     await DB.updatePlayer(State.roomCode, State.playerId, { skillCooldown: 1 });
     UI.showActionAnim('🔮', 1200);
-    UI.toast(`Hasil ramalan: ${target.name} terlihat sebagai Tim ${revealedTeam.toUpperCase()}`, 'info', 5000);
+    UI.toast(`🔮 Ramalan akurat: ${escapeHtml(target.name)} adalah Tim ${revealedTeam.toUpperCase()}`, 'info', 5000);
   },
 
   async doDoctor() {
+    if(State.myRole !== 'doctor') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih target!','warn'); return; }
-    const me = State.players[State.playerId];
 
-    // Cek self-heal berturut
+    // NERF: Dokter tidak bisa menyembuhkan diri sendiri sama sekali
     if(State.selectedTarget === State.playerId) {
-      if((me?.consecutiveSelfHeal||0) >= 1) {
-        UI.toast('Tidak bisa sembuhkan diri sendiri 2x berturut!','warn'); return;
-      }
-      await DB.updatePlayer(State.roomCode, State.playerId, { consecutiveSelfHeal: (me?.consecutiveSelfHeal||0)+1 });
-    } else {
-      await DB.updatePlayer(State.roomCode, State.playerId, { consecutiveSelfHeal: 0 });
+      UI.toast('Dokter tidak bisa menyembuhkan diri sendiri!','warn'); return;
     }
+
+    // Reset consecutiveSelfHeal karena tidak relevan lagi, tapi tetap update untuk backward compat
+    await DB.updatePlayer(State.roomCode, State.playerId, { consecutiveSelfHeal: 0 });
 
     await this._submitAction('heal', State.selectedTarget);
     UI.showActionAnim('💊', 1200);
@@ -1481,36 +1651,39 @@ const Game = {
   },
 
   async doGuard() {
+    if(State.myRole !== 'guard') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih target!','warn'); return; }
     await this._submitAction('guard', State.selectedTarget);
     await DB.updatePlayer(State.roomCode, State.playerId, { skillCooldown: 2 });
     UI.showActionAnim('🛡️', 1200);
-    UI.toast('Pemain dilindungi (80% berhasil)!', 'success');
+    UI.toast('Pemain dilindungi dengan sempurna! (100% berhasil)', 'success');
   },
 
-  async doWitchHeal() {
-    if(!State.selectedTarget) { UI.toast('Pilih target!','warn'); return; }
-    if(State.witchHealUsed) { UI.toast('Ramuan hidup sudah habis!','warn'); return; }
-    State.witchHealUsed = true;
-    // Simpan ke Firestore agar tidak reset saat refresh
-    await DB.updatePlayer(State.roomCode, State.playerId, { witchHealUsed: true });
-    await this._submitAction('witchHeal', State.selectedTarget);
-    UI.showActionAnim('💚', 1200);
-    UI.toast('Ramuan hidup digunakan!', 'success');
-  },
+  // doWitchHeal dihapus — Penyihir tidak lagi punya ramuan hidup (NERF)
 
   async doWitchPoison() {
+    if(State.myRole !== 'witch') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih target!','warn'); return; }
-    if(State.witchPoisonUsed) { UI.toast('Ramuan mati sudah habis!','warn'); return; }
+    if(State.witchPoisonUsed) { UI.toast('Ramuan racun sudah habis!','warn'); return; }
+
+    const target = State.players[State.selectedTarget];
+    if(!target) { UI.toast('Target tidak valid!','warn'); return; }
+
     State.witchPoisonUsed = true;
-    // Simpan ke Firestore agar tidak reset saat refresh
     await DB.updatePlayer(State.roomCode, State.playerId, { witchPoisonUsed: true });
     await this._submitAction('witchPoison', State.selectedTarget);
     UI.showActionAnim('💜', 1200);
-    UI.toast('Ramuan mati digunakan!', 'success');
+
+    // NERF: Jika target adalah tim biru, beri peringatan — ledakan diproses server-side di resolveNightActions
+    if(target.team === 'blue') {
+      UI.toast('⚠️ Kamu meracuni tim biru! Penyihir akan MELEDAK dan tereliminasi!', 'error', 5000);
+    } else {
+      UI.toast('Ramuan racun digunakan!', 'success');
+    }
   },
 
   async doWerewolf() {
+    if(State.myRole !== 'werewolf') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih korban!','warn'); return; }
     // Cek tidak bunuh target yang sama 2 malam berturut (baca dari player data)
     const me = State.players[State.playerId];
@@ -1520,6 +1693,8 @@ const Game = {
     // Werewolf tidak bisa bunuh vampire
     const target = State.players[State.selectedTarget];
     if(target?.role === 'vampire') { UI.toast('Serigala tidak bisa menyerang vampire!','warn'); return; }
+    // Werewolf tidak bisa bunuh sesama tim merah
+    if(target?.team === 'red') { UI.toast('Tidak bisa menyerang sesama tim!','warn'); return; }
 
     // Simpan lastKillTarget ke player doc agar persisten
     await DB.updatePlayer(State.roomCode, State.playerId, { lastKillTarget: State.selectedTarget });
@@ -1529,29 +1704,53 @@ const Game = {
   },
 
   async doDoppleganger() {
+    if(State.myRole !== 'doppleganger') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih target!','warn'); return; }
     const target = State.players[State.selectedTarget];
     if(!target) return;
 
-    // Validasi target punya role yang valid (bukan admin/null)
+    // Validasi target punya role yang valid
     if(!target.role || !ROLES[target.role]) {
       UI.toast('Target tidak memiliki role yang valid!','warn'); return;
     }
+    if(State.selectedTarget === State.playerId) {
+      UI.toast('Tidak bisa menyerang diri sendiri!','warn'); return;
+    }
 
-    // Salin role
-    const newRole = target.role;
-    const newTeam = target.team;
-    State.myRole = newRole;
-    State.myTeam = newTeam;
+    // BUFF: Hanya bisa mencuri dari tim biru
+    if(target.team !== 'blue') {
+      UI.toast('Doppleganger hanya bisa menyerang tim biru untuk mencuri skill!','warn'); return;
+    }
 
-    await DB.updatePlayer(State.roomCode, State.playerId, { role: newRole, team: newTeam });
+    // Cek limit skill yang sudah dicuri (maks 3)
+    const currentSkills = State.doppleSkills || [];
+    if(currentSkills.length >= 3) {
+      UI.toast('Sudah mencuri 3 skill! Tidak bisa mencuri lagi.','warn'); return;
+    }
+
+    // Cek apakah skill ini sudah pernah dicuri
+    if(currentSkills.includes(target.role)) {
+      UI.toast(`Skill ${ROLES[target.role].name} sudah pernah dicuri!`,'warn'); return;
+    }
+
+    // Submit aksi kill (target akan mati, skill dicuri)
     await this._submitAction('dopple', State.selectedTarget);
     UI.showActionAnim('👤', 1500);
-    UI.toast(`Kamu menyalin role ${ROLES[newRole]?.name}! Tim kamu sekarang ${newTeam}.`, 'success', 5000);
+    UI.toast(`Menyerang ${escapeHtml(target.name)}! Jika berhasil, skill ${ROLES[target.role]?.name} akan dicuri.`, 'success', 5000);
   },
 
   async doVampire() {
+    if(State.myRole !== 'vampire') { console.warn('[Security] Role mismatch blocked'); return; }
     if(!State.selectedTarget) { UI.toast('Pilih korban!','warn'); return; }
+    // Vampire tidak bisa menyerang sesama purple
+    const target = State.players[State.selectedTarget];
+    if(target?.team === 'purple') { UI.toast('Vampire tidak bisa menyerang sesama!','warn'); return; }
+    // Validasi vampire aktif (malam genap atau eclipse)
+    const dayNum = State.room?.day || 1;
+    const event = State.room?.currentEvent;
+    if(dayNum % 2 !== 0 && event !== 'eclipse') {
+      UI.toast('Vampire hanya aktif di malam genap!','warn'); return;
+    }
     await this._submitAction('vampKill', State.selectedTarget);
     UI.showActionAnim('🧛', 1500);
     UI.toast('Serangan vampire dikirim!', 'success');
@@ -1575,49 +1774,84 @@ const GameLogic = {
     const guarded = new Set();
     const killed = new Set();
     const deaths = [];
+    // Track doppleganger skill steals: { playerId: stolenRole }
+    const doppleKills = {};
 
     if(event === 'fog') {
-      // Semua skill gagal
-      return { killed: [], deaths: [] };
+      return { killed: [], deaths: [], doppleKills: {} };
     }
 
-    // 1. Heal (doctor & witch heal)
+    // 1. Heal (doctor only — witch heal sudah dihapus)
     Object.values(actions).forEach(a => {
-      if(a.action === 'heal' || a.action === 'witchHeal') healed.add(a.target);
+      if(a.action === 'heal') healed.add(a.target);
     });
 
-    // 2. Guard (80% berhasil)
+    // 2. Guard — BUFF: 100% berhasil (hapus Math.random)
     Object.values(actions).forEach(a => {
-      if(a.action === 'guard' && Math.random() < 0.8) guarded.add(a.target);
+      if(a.action === 'guard') guarded.add(a.target);
     });
 
-    // 3. Witch poison
-    Object.values(actions).forEach(a => {
+    // 3. Witch poison — NERF: cek apakah target tim biru (self-destruct)
+    Object.entries(actions).forEach(([actorId, a]) => {
       if(a.action === 'witchPoison') {
+        const witch = players[actorId];
         const t = players[a.target];
-        if(t?.alive && !healed.has(a.target) && !guarded.has(a.target)) {
+        if(!t?.alive) return;
+
+        // Jika tidak dilindungi, bunuh target
+        if(!healed.has(a.target) && !guarded.has(a.target)) {
           killed.add(a.target);
-          deaths.push({ playerId: a.target, cause: 'Diracuni penyihir' });
+          deaths.push({ playerId: a.target, cause: 'Diracuni penyihir 🧙' });
+        }
+
+        // NERF: Jika target tim biru, penyihir meledak!
+        if(t.team === 'blue' && witch?.alive) {
+          killed.add(actorId);
+          deaths.push({ playerId: actorId, cause: '💥 Penyihir meledak karena meracuni tim biru!' });
         }
       }
     });
 
     // 4. Werewolf kill
-    Object.values(actions).forEach(a => {
+    Object.entries(room.nightActions || {}).forEach(([actorId, a]) => {
       if(a.action === 'kill') {
-        const actorId = Object.keys(room.nightActions).find(k => room.nightActions[k] === a);
-        const actor = actorId ? players[actorId] : null;
+        const actor = players[actorId];
+        if(!actor || actor.team !== 'red') return;
         const t = players[a.target];
         if(!t?.alive) return;
         if(healed.has(a.target) || guarded.has(a.target)) return;
-        // Werewolf tidak bisa bunuh vampire
         if(t.role === 'vampire') return;
-        killed.add(a.target);
-        deaths.push({ playerId: a.target, cause: 'Dimangsa serigala 🐺' });
+        if(t.team === 'red') return;
+        if(!killed.has(a.target)) {
+          killed.add(a.target);
+          deaths.push({ playerId: a.target, cause: 'Dimangsa serigala 🐺' });
+        }
       }
     });
 
-    // 5. Vampire kill
+    // 5. Doppleganger kill — BUFF: bunuh tim biru dan curi skillnya
+    Object.entries(actions).forEach(([actorId, a]) => {
+      if(a.action === 'dopple') {
+        const actor = players[actorId];
+        if(!actor || actor.team !== 'red') return;
+        const t = players[a.target];
+        if(!t?.alive) return;
+        // Hanya bisa bunuh tim biru
+        if(t.team !== 'blue') return;
+        if(healed.has(a.target) || guarded.has(a.target)) return;
+
+        if(!killed.has(a.target)) {
+          killed.add(a.target);
+          deaths.push({ playerId: a.target, cause: 'Diserang Doppleganger 👤' });
+          // Catat skill yang dicuri
+          if(t.role && ROLES[t.role]) {
+            doppleKills[actorId] = t.role;
+          }
+        }
+      }
+    });
+
+    // 6. Vampire kill
     const dayNum = room.day || 1;
     if(dayNum % 2 === 0 || event === 'eclipse') {
       Object.values(actions).forEach(a => {
@@ -1625,13 +1859,15 @@ const GameLogic = {
           const t = players[a.target];
           if(!t?.alive) return;
           if(healed.has(a.target) || guarded.has(a.target)) return;
-          killed.add(a.target);
-          deaths.push({ playerId: a.target, cause: 'Diserang vampire 🧛' });
+          if(!killed.has(a.target)) {
+            killed.add(a.target);
+            deaths.push({ playerId: a.target, cause: 'Diserang vampire 🧛' });
+          }
         }
       });
     }
 
-    return { killed: [...killed], deaths };
+    return { killed: [...killed], deaths, doppleKills };
   },
 
   async updateCooldowns(code, players) {
@@ -1656,16 +1892,21 @@ function checkWinCondition(players) {
   const purple = alive.filter(p => p.team === 'purple');
   const yellow = alive.filter(p => p.team === 'yellow');
 
+  // Jika tidak ada pemain hidup sama sekali — game over tanpa pemenang (edge case)
+  if(alive.length === 0) return 'blue'; // Default ke blue
+
   const allMonstersGone = red.length === 0 && purple.length === 0;
 
-  // Tim Biru menang jika semua musuh mati
+  // Tim Biru menang jika semua musuh (merah & ungu) mati dan masih ada biru hidup
   if(allMonstersGone && blue.length > 0) return 'blue';
 
-  // Tim Merah menang jika sama atau lebih dari sisa dan biru + ungu habis
-  if(red.length >= blue.length + purple.length && blue.length + purple.length <= 0 && red.length > 0) return 'red';
-  if(red.length >= alive.length / 2 && blue.length === 0 && purple.length === 0) return 'red';
+  // Tim Merah menang jika:
+  // Jumlah merah >= total semua non-merah (mereka bisa mendominasi voting)
+  // DAN biru dan ungu sudah tidak bisa menghentikan mereka
+  const nonRed = alive.length - red.length;
+  if(red.length > 0 && red.length >= nonRed && blue.length === 0) return 'red';
 
-  // Tim Ungu menang jika semua lain mati
+  // Tim Ungu menang jika semua tim lain mati (hanya ungu tersisa)
   if(purple.length > 0 && blue.length === 0 && red.length === 0 && yellow.length === 0) return 'purple';
 
   // Tidak ada pemenang
@@ -1692,18 +1933,50 @@ const Chat = {
     el.scrollTop = el.scrollHeight;
   },
 
+  // Rate limiter untuk chat
+  _lastSentTime: {},
+  _CHAT_COOLDOWN_MS: 1500, // 1.5 detik antar pesan
+
   async _send(inputId, type) {
     const inp = document.getElementById(inputId);
-    if(!inp || !inp.value.trim()) return;
-    const text = inp.value.trim();
-    inp.value = '';
+    if(!inp) return;
 
+    const rawText = inp.value.trim();
+    if(!rawText) return;
+
+    // Validasi panjang pesan
+    if(rawText.length > 200) { UI.toast('Pesan terlalu panjang (maks 200 karakter)!','warn'); return; }
+    if(rawText.length < 1)   return;
+
+    // Rate limiting per channel
+    const now = Date.now();
+    const lastSent = this._lastSentTime[type] || 0;
+    if(now - lastSent < this._CHAT_COOLDOWN_MS) {
+      UI.toast('Tunggu sebentar sebelum mengirim pesan lagi!','warn'); return;
+    }
+
+    // Validasi state
     if(!State.roomCode) return;
+    if(!State.playerId || !State.playerName) return;
+
+    // Pemain mati hanya bisa kirim pesan 'dead'
+    if(!State.myAlive && type !== 'dead') {
+      UI.toast('Pemain mati hanya bisa chat di channel arwah!','warn'); return;
+    }
+
+    // Wolf chat hanya untuk tim merah
+    if(type === 'wolf' && State.myTeam !== 'red') {
+      console.warn('[Security] Non-red player tried to send wolf chat');
+      return;
+    }
+
+    this._lastSentTime[type] = now;
+    inp.value = '';
 
     await DB.addMessage(State.roomCode, {
       sender: State.playerId,
       name: State.playerName,
-      text,
+      text: rawText,   // escapeHtml applied on render, not storage
       type
     });
   },
@@ -1777,8 +2050,11 @@ const Particles = {
     this.resize();
     this.particles = Array.from({length: 40}, () => this.createParticle());
     if(this._raf) cancelAnimationFrame(this._raf);
+    // Remove previous resize listener to prevent leak on re-init
+    if(this._resizeHandler) window.removeEventListener('resize', this._resizeHandler);
+    this._resizeHandler = () => this.resize();
+    window.addEventListener('resize', this._resizeHandler);
     this.loop();
-    window.addEventListener('resize', () => this.resize());
   },
 
   createParticle() {
@@ -1828,12 +2104,24 @@ const FirebaseConfig = {
     const ak = document.getElementById('cfgApiKey').value.trim();
     const pi = document.getElementById('cfgProjectId').value.trim();
     const ai = document.getElementById('cfgAppId').value.trim();
-    if(ak && pi && ai) {
+    if(!ak || !pi || !ai) {
+      UI.toast('Isi semua field konfigurasi!','warn');
+      return;
+    }
+    // Validasi format minimal
+    if(ak.length < 10 || pi.length < 3 || ai.length < 5) {
+      UI.toast('Format konfigurasi tidak valid!','warn');
+      return;
+    }
+    // CATATAN KEAMANAN: API key Firebase disimpan di localStorage.
+    // Ini aman karena Firebase API key adalah PUBLIC key (bukan secret).
+    // Keamanan sebenarnya ada di Firestore Security Rules.
+    try {
       localStorage.setItem('ww_fb_config', JSON.stringify({ apiKey:ak, projectId:pi, appId:ai }));
       UI.toast('Config disimpan. Muat ulang halaman...','success');
       setTimeout(() => location.reload(), 1500);
-    } else {
-      UI.toast('Isi semua field!','warn');
+    } catch(e) {
+      UI.toast('Gagal simpan config: ' + e.message, 'error');
     }
   }
 };
@@ -1857,8 +2145,14 @@ function shuffleArray(arr) {
 }
 
 function escapeHtml(str) {
-  if(!str) return '';
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  if(typeof str !== 'string') return '';
+  return str
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#x27;')
+    .replace(/`/g,'&#x60;');
 }
 
 /* ═══════════════════════════════════════════════════════════════
