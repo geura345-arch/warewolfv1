@@ -68,17 +68,17 @@
     // Fallback ke config default (ganti dengan config project kamu)
     if(!firebaseConfig) {
       firebaseConfig = {
-        apiKey: "GANTI_DENGAN_API_KEY_KAMU",
-        authDomain: "GANTI_DENGAN_PROJECT_ID.firebaseapp.com",
-        projectId: "GANTI_DENGAN_PROJECT_ID",
-        storageBucket: "GANTI_DENGAN_PROJECT_ID.firebasestorage.app",
-        messagingSenderId: "GANTI_MESSAGING_SENDER_ID",
-        appId: "GANTI_DENGAN_APP_ID"
+        apiKey: "AIzaSyAwh9c2I8qNdzlRVfT9ySbW7J1sQepANbI",
+        authDomain: "warewolf-eac34.firebaseapp.com",
+        projectId: "warewolf-eac34",
+        storageBucket: "warewolf-eac34.firebasestorage.app",
+        messagingSenderId: "24588337149",
+        appId: "1:24588337149:web:7ea56674c7942599702394"
       };
     }
 
     // Validasi config sebelum init
-    const isValidConfig = firebaseConfig.apiKey !== 'GANTI_DENGAN_API_KEY_KAMU'
+    const isValidConfig = firebaseConfig.apiKey !== 'AIzaSyAwh9c2I8qNdzlRVfT9ySbW7J1sQepANbI'
       && firebaseConfig.apiKey.length > 10
       && firebaseConfig.projectId.length > 3;
 
